@@ -245,6 +245,88 @@ Actions that reduce condition:
 
 ---
 
+## Intelligence & Context System
+
+### Overview
+
+Bots can receive **contextual intelligence** based on their achievements, history, or current state. This information is not shared universally—it creates strategic depth where some bots have "inside knowledge" about the arena that others don't.
+
+### How It Works
+
+1. **Achievement Triggers** - Bots earn intel based on accomplishments
+   - First bot to scout a region → gets map data of that area
+   - Survive X rounds → hints about fire circle timing
+   - Eliminate another bot → reveals victim's last known position
+   - High condition → more detailed sensor readings
+
+2. **State-Based Intel** - Current situation unlocks info
+   - Low health → vulnerability scan of nearby bots
+   - Near fire circle → escape route suggestions
+   - Last 5 bots → reveals all positions (fog of war lifts)
+
+3. **Shareable Intel** - Bots can trade information
+   - Bot can broadcast intel to other bots via chat
+   - Intel has a "truthiness" score (how reliable)
+   - Bots can verify intel by acting on it
+
+### Intel Types
+
+| Intel Type | Trigger | Value |
+|------------|---------|-------|
+| `map_fragment` | First to explore region | Reveals terrain in area |
+| `fire_timing` | Survive 10 rounds | Predicts next shrink |
+| `bot_profile` | Eliminate bot | Attack weakness revealed |
+| `escape_route` | Near fire edge | Safe path to center |
+| `surroundings` | High condition | Detailed nearby info |
+| `global_position` | Final 5 | All bot locations revealed |
+
+### Example Intel Payload
+
+```json
+{
+  "type": "map_fragment",
+  "data": {
+    "region": "north-east",
+    "terrain": ["clear", "obstacle", "hazard"],
+    "hidden_paths": ["north"],
+    "reliability": 0.95
+  },
+  "source": "system",
+  "shared_by": null
+}
+```
+
+### Bot Communication of Intel
+
+```javascript
+// Bot can broadcast intel to arena
+bot.shareIntel({
+  type: "enemy_sighted",
+  target_bot_id: "uuid-of-bot",
+  location: { x: 45, y: 67 },
+  reliability: 0.8
+});
+
+// Other bots receive:
+{
+  "from_bot": "ScoutBot",
+  "type": "enemy_sighted",
+  "target_bot_id": "uuid-of-bot",
+  "location": { "x": 45, "y": 67 },
+  "reliability": 0.8,
+  "timestamp": "2026-02-05T20:00:00Z"
+}
+```
+
+### Strategic Implications
+
+- Bots with more achievements = more intel = higher chance of winning
+- Bots can lie (optional: add trust scores)
+- Sharing intel builds alliances or can be deception
+- Information becomes a resource to manage
+
+---
+
 ## Bot SDK Interface
 
 ### JavaScript SDK (Reference)
