@@ -614,3 +614,103 @@ jobs:
 
 - Ideas Registry: https://github.com/clawgreen/goc-ideas
 - Repository: https://github.com/clawgreen/ClawDungeon
+
+---
+
+## Safe Supabase Workflow for Clawdbot
+
+### The Problem
+
+Clawdbot has access to multiple projects/services. We need to prevent:
+- Accidental deletion of wrong project
+- Migrations affecting non-ClawDungeon data
+- Overwriting production data during development
+
+### Supabase API Keys: Know Your Limits
+
+| Key Type | Access | Safe for Clawdbot? |
+|----------|--------|-------------------|
+| `anon` | Public, RLS-filtered | ✅ Safe for reads |
+| `service_role` | Admin, bypasses RLS | ⚠️ Dangerous - use sparingly |
+| `supabase_admin` | Full org access | ❌ Never use from Clawdbot |
+
+**Rule:** Use `anon` for everything except migrations that must bypass RLS.
+
+### Recommended Setup
+
+**1. Create Dedicated Supabase Project**
+```
+Project Name: clawd-clawdungeon
+URL: https://clawd-clawdungeon.supabase.co
+```
+
+**2. Configure Environment Variables**
+```bash
+# ~/clawd/.env.supabase
+SUPABASE_URL=https://clawd-clawdungeon.supabase.co
+SUPABASE_ANON_KEY=eyJ...anon...
+SUPABASE_SERVICE_KEY=eyJ...service...
+```
+
+**3. Create Clawdbot Skill Guardrails**
+
+```javascript
+// goc-supabase-safe skill concept
+const PROJECT_NAME = 'clawd-clawdungeon';
+
+// Always verify target project before operations
+async function verifyProject() {
+  const { data } = await supabase
+    .from('_prisma_migrations')
+    .select('*')
+    .limit(1);
+  
+  if (!data) throw new Error('⚠️ ABORTED: Wrong Supabase project!');
+}
+
+// Safe operations (auto-approved)
+--query "SELECT * FROM bots"  ✅
+--status                       ✅
+--migrate                      ✅
+
+// Dangerous operations (require approval)
+--drop-table bots              ⚠️ Requires APPROVE_DROP=true
+--delete-all                   ⚠️ Requires APPROVE_DROP=true
+--reset-project                ❌ Never auto-approved
+```
+
+### Clawdbot Skill Commands
+
+| Command | Safety | Description |
+|---------|--------|-------------|
+| `--query "SELECT..."` | ✅ Safe | Read-only queries |
+| `--status` | ✅ Safe | Show project status |
+| `--migrate` | ✅ Safe | Run migrations (creates only) |
+| `--create-table` | ✅ Safe | Create new tables |
+| `--backup` | ✅ Safe | Create backup first |
+| `--drop-table <name>` | ⚠️ Approval | Requires `APPROVE_DROP=true` |
+| `--delete-all` | ⚠️ Approval | Requires `APPROVE_DROP=true` |
+
+### Migrations Workflow
+
+Store migrations in repo:
+```
+~/GitHub/ClawDungeon/migrations/
+├── 001_create_bots_table.sql
+├── 002_create_users_table.sql
+└── 003_add_achievements.sql
+```
+
+Run via Clawdbot:
+```bash
+clawdbot skill run goc-supabase --migrate 003
+# Verifies project first, then runs migration
+```
+
+### Golden Rule
+
+> If it deletes or modifies existing data, require explicit approval.
+
+---
+
+## References
