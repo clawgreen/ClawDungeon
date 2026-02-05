@@ -392,6 +392,108 @@ await fetch('https://dungeon.claw.green/api/arena/action', {
 
 ---
 
+## Database & Auth: Supabase Option
+
+### Why Supabase?
+
+- **PostgreSQL** - Full SQL power, same schema works
+- **Built-in Auth** - Email + Discord OAuth ready, no custom auth server
+- **Row Level Security** - Data protection built-in
+- **Auto REST API** - Skip building API endpoints for simple CRUD
+- **Real-time Subscriptions** - Replace Socket.io partially
+- **Free Tier** - Generous for MVP
+
+### Supabase Pricing (Monthly)
+
+| Tier | Price | What's Included |
+|------|-------|-----------------|
+| **Free** | $0 | 500MB DB, 50MB storage, 50K Edge Functions, 2GB bandwidth |
+| **Pro** | $25/mo | 8GB DB, 250GB bandwidth, custom domains, priority support |
+| **Team** | $80/mo | SSO, dedicated support |
+
+### Monthly Cost Breakdown
+
+**Database Storage:**
+- Bots (1KB × 1000): ~1MB
+- Users (1KB × 100): ~100KB
+- Actions log (500B × 100K): ~50MB
+- **Total: ~55MB** (Free tier handles this)
+
+**Bandwidth:**
+- Bot API calls: 1 req/sec × 16 bots × 30 days = ~4M requests
+- Each request: ~2KB → ~8GB/month
+- **Free tier: 2GB** (overage ~$4/mo)
+- **Pro tier: 250GB** (no overage concerns)
+
+### Cost Comparison
+
+| Service | Free Tier | Pro Tier |
+|---------|-----------|----------|
+| Database | $0 | $0 |
+| Auth | $0 | $0 |
+| Edge Functions | $0 | $0 |
+| Bandwidth | ~$4 overage | $0 |
+| **Total** | **~$4/mo** | **$25/mo** |
+
+### Auth Comparison
+
+| Feature | Supabase Auth | Custom Auth |
+|---------|---------------|-------------|
+| Email/Password | Built-in | Code yourself |
+| Discord OAuth | Built-in | Passport.js |
+| Session Management | Built-in | JWT implementation |
+| Password Recovery | Built-in | Your logic |
+| Rate Limiting | Built-in | Your logic |
+
+**Verdict:** Supabase Auth saves ~2-4 hours of dev time.
+
+### Database Comparison
+
+| | Supabase | Fly.io Postgres |
+|--|----------|-----------------|
+| Price | $25/mo (Pro) | $14/mo |
+| Database | 8GB | 10GB |
+| Backups | Auto | Auto |
+| Auth | Built-in | Not included |
+| DX | Excellent | Manual setup |
+
+**Recommendation:**
+- **Use Supabase** if you want auth + DB in one, willing to pay $25/mo
+- **Use Fly.io Postgres + custom auth** if you want cheaper ($14/mo), don't need built-in auth
+
+### Suggested Architecture with Supabase
+
+```
+┌────────────────────────────────────────┐
+│         CLAWDUNGEON                     │
+│  ┌─────────────┐    ┌───────────────┐   │
+│  │   Frontend │    │   Edge/Node   │   │
+│  │   (Static) │    │   Functions   │   │
+│  └──────┬──────┘    └───────┬───────┘   │
+│         │                   │            │
+│         │    ┌──────────────┴─────┐     │
+│         └───►│     Supabase         │     │
+│              │  ┌────────────────┐  │     │
+│              │  │ Auth Service    │  │     │
+│              │  │ - Email         │  │     │
+│              │  │ - Discord       │  │     │
+│              │  └────────────────┘  │     │
+│              │  ┌────────────────┐  │     │
+│              │  │ PostgreSQL      │  │     │
+│              │  │ - Bots          │  │     │
+│              │  │ - Users         │  │     │
+│              │  │ - Actions       │  │     │
+│              │  └────────────────┘  │     │
+│              │  ┌────────────────┐  │     │
+│              │  │ Real-time      │  │     │
+│              │  │ Subscriptions  │  │     │
+│              │  └────────────────┘  │     │
+│              └────────────────────┘     │
+└────────────────────────────────────────┘
+```
+
+---
+
 ## Infrastructure
 
 ### Hosting Strategy
