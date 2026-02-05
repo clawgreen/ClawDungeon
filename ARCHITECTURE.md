@@ -617,99 +617,55 @@ jobs:
 
 ---
 
-## Safe Supabase Workflow for Clawdbot
+## Clarification: Who Owns Supabase?
 
-### The Problem
+**ClawDungeon** (the game project) owns the Supabase project.
 
-Clawdbot has access to multiple projects/services. We need to prevent:
-- Accidental deletion of wrong project
-- Migrations affecting non-ClawDungeon data
-- Overwriting production data during development
+**Clawdbot** (your AI assistant) does NOT connect to Supabase directly.
 
-### Supabase API Keys: Know Your Limits
+### How It Works
 
-| Key Type | Access | Safe for Clawdbot? |
-|----------|--------|-------------------|
-| `anon` | Public, RLS-filtered | ✅ Safe for reads |
-| `service_role` | Admin, bypasses RLS | ⚠️ Dangerous - use sparingly |
-| `supabase_admin` | Full org access | ❌ Never use from Clawdbot |
-
-**Rule:** Use `anon` for everything except migrations that must bypass RLS.
-
-### Recommended Setup
-
-**1. Create Dedicated Supabase Project**
 ```
-Project Name: clawd-clawdungeon
-URL: https://clawd-clawdungeon.supabase.co
+ClawDungeon Project          Clawdbot (Trevor's AI)
+┌──────────────────┐         ┌──────────────────┐
+│ Supabase Project │         │ GitHub Access    │
+│ - Database       │         │ - Manage repos   │
+│ - Auth           │         │ - Create issues  │
+└──────────────────┘         │ - Run CI/CD      │
+                             └──────────────────┘
+                                    │
+                                    ▼
+                           Trevor uses Clawdbot
+                           to help with ClawDungeon
+                           via GitHub, not Supabase
 ```
 
-**2. Configure Environment Variables**
-```bash
-# ~/clawd/.env.supabase
-SUPABASE_URL=https://clawd-clawdungeon.supabase.co
-SUPABASE_ANON_KEY=eyJ...anon...
-SUPABASE_SERVICE_KEY=eyJ...service...
-```
+### Clawdbot's Role with ClawDungeon
 
-**3. Create Clawdbot Skill Guardrails**
+| What Clawdbot Can Do | How |
+|---------------------|-----|
+| Create GitHub issues | ✅ Direct access |
+| Run CI/CD pipelines | ✅ GitHub Actions |
+| Review code | ✅ GitHub |
+| Create migrations files | ✅ Writes SQL to repo |
+| Suggest Supabase queries | ✅ But Trevor runs them |
 
-```javascript
-// goc-supabase-safe skill concept
-const PROJECT_NAME = 'clawd-clawdungeon';
+### Trevor's Workflow
 
-// Always verify target project before operations
-async function verifyProject() {
-  const { data } = await supabase
-    .from('_prisma_migrations')
-    .select('*')
-    .limit(1);
-  
-  if (!data) throw new Error('⚠️ ABORTED: Wrong Supabase project!');
-}
+1. Clawdbot creates SQL migration in `~/GitHub/ClawDungeon/migrations/`
+2. Trevor reviews the migration
+3. Trevor runs it against Supabase manually (or via dashboard)
+4. No risk of Clawdbot accidentally deleting data
 
-// Safe operations (auto-approved)
---query "SELECT * FROM bots"  ✅
---status                       ✅
---migrate                      ✅
+### Supabase Project Setup (Done by Trevor)
 
-// Dangerous operations (require approval)
---drop-table bots              ⚠️ Requires APPROVE_DROP=true
---delete-all                   ⚠️ Requires APPROVE_DROP=true
---reset-project                ❌ Never auto-approved
-```
+1. Create project at https://supabase.com
+2. Set up tables via Dashboard or SQL Editor
+3. Get keys, store locally (not in Clawdbot)
+4. Add keys to ClawDungeon's `.env` file
+5. Deploy to Fly.io with env vars
 
-### Clawdbot Skill Commands
-
-| Command | Safety | Description |
-|---------|--------|-------------|
-| `--query "SELECT..."` | ✅ Safe | Read-only queries |
-| `--status` | ✅ Safe | Show project status |
-| `--migrate` | ✅ Safe | Run migrations (creates only) |
-| `--create-table` | ✅ Safe | Create new tables |
-| `--backup` | ✅ Safe | Create backup first |
-| `--drop-table <name>` | ⚠️ Approval | Requires `APPROVE_DROP=true` |
-| `--delete-all` | ⚠️ Approval | Requires `APPROVE_DROP=true` |
-
-### Migrations Workflow
-
-Store migrations in repo:
-```
-~/GitHub/ClawDungeon/migrations/
-├── 001_create_bots_table.sql
-├── 002_create_users_table.sql
-└── 003_add_achievements.sql
-```
-
-Run via Clawdbot:
-```bash
-clawdbot skill run goc-supabase --migrate 003
-# Verifies project first, then runs migration
-```
-
-### Golden Rule
-
-> If it deletes or modifies existing data, require explicit approval.
+**Clawdbot never has Supabase credentials.**
 
 ---
 
