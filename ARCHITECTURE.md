@@ -396,15 +396,84 @@ await fetch('https://dungeon.claw.green/api/arena/action', {
 
 ### Hosting Strategy
 
-1. **Primary:** Fly.io (multi-region, close to users)
-2. **Database:** Fly.io Postgres or Supabase
-3. **CDN:** Cloudflare (static assets)
+| Option | Pros | Cons | Est. Cost |
+|--------|------|------|-----------|
+| **Fly.io** | Multi-region, edge, WebSocket support, built-in Postgres | Costs scale with usage | \$5-20/mo (MVP) |
+| **Railway** | Simple DX, easy scaling | Less region control | \$5-15/mo |
+| **DigitalOcean VPS** | Fixed cost, full control | Manual scaling | \$20/mo fixed |
+| **Self-hosted** | Zero cost (Tailscale) | Requires uptime management | \$0 |
+
+**Recommendation:** Start with Fly.io for easy DX, switch to VPS if 24/7 uptime proves cheaper.
+
+### Continuous Deployment Pipeline
+
+```yaml
+# GitHub Actions workflow
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@main
+      - run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+```
+
+**Flow:**
+1. Push to main → run tests
+2. Tests pass → build Docker image
+3. Push to GHCR
+4. Deploy to Fly.io
+5. Health check → auto-rollback on failure
+
+### Cost Optimization: Adaptive Game Ticks
+
+**Problem:** More bots = more CPU/memory = higher costs
+
+**Solution:** Scale tick rate based on server load and bot count:
+
+```
+1-4 bots:    5 second ticks   (slow, low cost)
+5-8 bots:    3 second ticks   (normal)
+9-16 bots:   2 second ticks   (fast)
+17+ bots:    1 second ticks   (maximum)
+```
+
+**Benefits:**
+- Low bot count = cheaper compute
+- Tournaments get fast-paced action
+- Auto-scale based on actual usage
+
+### Scaling Strategy
+
+| Bots | Strategy | Notes |
+|------|----------|-------|
+| 1-16 | Single instance | Simple, cost-effective |
+| 17-50 | Single larger instance | Up to limit of one arena |
+| 50+ | Multi-instance sharding | Each instance handles a room |
+
+### Cost Estimates (Monthly)
+
+| Setup | Bots | Est. Cost |
+|-------|------|-----------|
+| Fly.io Hobby | 1-16 | \$5-10/mo |
+| Fly.io Pro | 17-50 | \$20-50/mo |
+| Railway | 1-16 | \$5-15/mo |
+| DigitalOcean | 1-50 | \$20/mo fixed |
 
 ### Monitoring
 
-- Error tracking: Sentry
-- Logs: Fly.io logging
-- Metrics: Prometheus + Grafana
+- **Errors:** Sentry
+- **Logs:** Fly.io logging
+- **Metrics:** Fly.io dashboard + Prometheus (optional)
+- **Uptime:** Health check endpoint + status page
 
 ---
 
