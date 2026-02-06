@@ -447,48 +447,120 @@ await fetch('https://dungeon.claw.green/api/arena/action', {
 
 **Verdict:** Supabase Auth saves ~2-4 hours of dev time.
 
-### Database Comparison
+---
 
-| | Supabase | Fly.io Postgres |
-|--|----------|-----------------|
-| Price | $25/mo (Pro) | $14/mo |
-| Database | 8GB | 10GB |
-| Backups | Auto | Auto |
-| Auth | Built-in | Not included |
-| DX | Excellent | Manual setup |
+## Database Strategy: Keep It Simple
 
-**Recommendation:**
-- **Use Supabase** if you want auth + DB in one, willing to pay $25/mo
-- **Use Fly.io Postgres + custom auth** if you want cheaper ($14/mo), don't need built-in auth
+### Option 1: Supabase Everything ($25/mo)
 
-### Suggested Architecture with Supabase
+Everything in one place:
+- Auth (email + Discord)
+- PostgreSQL database
+- Real-time subscriptions
+- RLS (built-in row-level security)
+
+**Pros:** Simple, one dashboard, RLS available
+**Cons:** More expensive than raw Postgres
+
+### Option 2: Supabase Auth + External Postgres ($9-15/mo)
+
+```
+Supabase Auth (Free)          Neon/Fly.io Postgres
+┌─────────────────┐            ┌─────────────────────┐
+│ Manages users   │◄──────────│ user_id (UUID)       │
+│ - Email/Pass    │  UUIDs     │ - bots               │
+│ - Discord OAuth │            │ - actions            │
+│ - Session      │            │ - rooms              │
+└─────────────────┘            └─────────────────────┘
+```
+
+**How record ownership works:**
+1. User signs up → Supabase gives `auth.users.id` (UUID)
+2. Store that UUID in your PostgreSQL as `user_id`
+3. Record ownership via UUID:
+```sql
+-- Delete user's bots
+DELETE FROM bots WHERE user_id = 'uuid-here';
+
+-- Check ownership
+SELECT * FROM bots WHERE id = ? AND user_id = ?;
+```
+
+**Pros:** Cheaper ($9-15/mo), full control over database
+**Cons:** RLS you manage yourself, slight complexity
+
+### Don't Split Data Artificially
+
+Your data is relational - **joins are essential**:
+- Users → Bots
+- Bots → Actions
+- Bots → Intel
+- Rooms → Occupants
+
+**Joining across databases = impossible.**
+
+### Record-Level Security (RLS) Concerns
+
+**Supabase RLS:**
+- Automatic row-level security tied to auth
+- Policies enforce user ownership at database level
+- Example:
+```sql
+CREATE POLICY "Users can only see their bots"
+ON bots FOR SELECT
+USING (auth.uid() = user_id);
+```
+
+**Without Supabase DB (App-level RLS):**
+- Handle ownership in your API code
+- Simpler for ClawDungeon since most data is public:
+```javascript
+// Anyone can READ bots in arena
+app.get('/api/bots/:id', (req, res) => {
+  return res.json(db.get('SELECT * FROM bots WHERE id = ?', req.params.id));
+});
+
+// Only owner can DELETE
+app.delete('/api/bots/:id', (req, res) => {
+  const bot = db.get('SELECT * FROM bots WHERE id = ?', req.params.id);
+  if (bot.owner_id !== req.user.id) {
+    return res.status(403).json({ error: 'Not your bot' });
+  }
+  db.run('DELETE FROM bots WHERE id = ?', req.params.id);
+});
+```
+
+**For ClawDungeon:** App-level checks are fine. Most data (arena, bots in play) is public anyway.
+
+---
+
+## Recommended Architecture
+
+**Keep it simple: One database, handle auth at application level.**
 
 ```
 ┌────────────────────────────────────────┐
 │         CLAWDUNGEON                     │
 │  ┌─────────────┐    ┌───────────────┐   │
-│  │   Frontend │    │   Edge/Node   │   │
-│  │   (Static) │    │   Functions   │   │
+│  │   Frontend │    │   Node.js API  │   │
+│  │   (Static) │◄───│   (Express)    │   │
 │  └──────┬──────┘    └───────┬───────┘   │
 │         │                   │            │
 │         │    ┌──────────────┴─────┐     │
-│         └───►│     Supabase         │     │
-│              │  ┌────────────────┐  │     │
-│              │  │ Auth Service    │  │     │
-│              │  │ - Email         │  │     │
-│              │  │ - Discord       │  │     │
-│              │  └────────────────┘  │     │
-│              │  ┌────────────────┐  │     │
-│              │  │ PostgreSQL      │  │     │
-│              │  │ - Bots          │  │     │
-│              │  │ - Users         │  │     │
-│              │  │ - Actions       │  │     │
-│              │  └────────────────┘  │     │
-│              │  ┌────────────────┐  │     │
-│              │  │ Real-time      │  │     │
-│              │  │ Subscriptions  │  │     │
-│              │  └────────────────┘  │     │
+│         └───►│   PostgreSQL        │     │
+│              │   (Neon/Fly.io)    │     │
+│              │   - Bots            │     │
+│              │   - Users           │     │
+│              │   - Actions        │     │
+│              │   - Intel          │     │
 │              └────────────────────┘     │
+│                                           │
+│  ┌─────────────────────────────────────┐ │
+│  │   Supabase Auth (Free)              │ │
+│  │   - Email/Password                  │ │
+│  │   - Discord OAuth                   │ │
+│  │   - Returns UUIDs used in Postgres  │ │
+│  └─────────────────────────────────────┘ │
 └────────────────────────────────────────┘
 ```
 
