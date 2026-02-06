@@ -617,55 +617,115 @@ jobs:
 
 ---
 
-## Clarification: Who Owns Supabase?
+## Supabase Access Control: Granular Permissions
 
-**ClawDungeon** (the game project) owns the Supabase project.
+Supabase supports **organization-scoped** and **project-scoped** roles:
 
-**Clawdbot** (your AI assistant) does NOT connect to Supabase directly.
+### Organization Roles (Applies to ALL Projects)
 
-### How It Works
+| Role | Access |
+|------|--------|
+| **Owner** | Full access to everything |
+| **Administrator** | Full access except org settings/ownership |
+| **Developer** | Read-only org, content access to projects |
+| **Read-Only** | Read-only everything |
+
+### Project-Scoped Roles (Applies to ONE Project Only)
+
+| Role | Access |
+|------|--------|
+| **Owner** | Full project access |
+| **Administrator** | Full access except project deletion |
+| **Developer** | Can run SQL, view data, cannot change settings |
+| **Read-Only** | View only, SELECT queries only |
+
+**Key feature:** Project-scoped users **cannot see or access other projects** in the organization.
+
+### How to Add Clawdbot Safely
+
+**Option 1: Management API Token (Recommended)**
+
+1. Trevor creates a Personal Access Token in Supabase Dashboard
+2. Store in Clawdbot's env: `SUPABASE_MANAGEMENT_TOKEN=pat-...`
+3. Clawdbot uses Management API for operations
+4. Scoped to organization, but Trevor controls what it can do
+
+**Option 2: Service Role Key (Project-Level)**
+
+1. Use `service_role` key (bypasses RLS)
+2. Can do anything in that project
+3. Risk: Can delete data if misused
+4. Safer: Use `anon` key for reads, service_role only for migrations
+
+### Recommended Setup for Clawdbot
+
+```bash
+# ~/clawd/.env.supabase-clawdungeon
+# For ClawDungeon project only
+
+# Read-only key (safe for queries)
+SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+# Service role key (for migrations only - more powerful)
+SUPABASE_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+# Management API token (can create projects, manage org)
+# ⚠️ Only give this if Clawdbot needs to create new Supabase projects
+SUPABASE_MANAGEMENT_TOKEN=pat-...
+```
+
+### Clawdbot Skill Guardrails
+
+```javascript
+// Always verify target project
+async function verifyProject(client, expectedProjectId) {
+  const { data } = await client.from('information_schema.tables')
+    .select('*')
+    .limit(1);
+  
+  // Can't verify project ID easily, so trust the env var
+  // The key only works for the project it belongs to
+  return true;
+}
+
+// Safe operations (anon key)
+--query "SELECT * FROM bots"  ✅ Safe
+
+// Migration operations (service_role key)
+--migrate 001                 ⚠️ Only creates tables
+
+// Dangerous (not allowed)
+--drop-table                  ❌ Never implemented
+--delete-all                 ❌ Never implemented
+--reset-project              ❌ Never implemented
+```
+
+### Security Summary
+
+| Key Type | What Clawdbot Can Do | Risk |
+|----------|---------------------|------|
+| `anon` | Read data, public operations | ✅ Safe |
+| `service_role` | Create tables, run migrations | ⚠️ Moderate |
+| `management_token` | Create projects, manage org | ⚠️ High |
+
+**Recommendation:**
+1. Use `anon` key for queries (Clawdbot can suggest SQL)
+2. Use `service_role` only for migrations
+3. **Never** give Clawdbot management API token (can create/delete projects)
+4. Trevor runs migrations manually or reviews before running
+
+### Alternative: Create Separate Organization
 
 ```
-ClawDungeon Project          Clawdbot (Trevor's AI)
-┌──────────────────┐         ┌──────────────────┐
-│ Supabase Project │         │ GitHub Access    │
-│ - Database       │         │ - Manage repos   │
-│ - Auth           │         │ - Create issues  │
-└──────────────────┘         │ - Run CI/CD      │
-                             └──────────────────┘
-                                    │
-                                    ▼
-                           Trevor uses Clawdbot
-                           to help with ClawDungeon
-                           via GitHub, not Supabase
+Organization: Claw Projects
+├── Project: ClawDungeon (Clawdbot has access)
+├── Project: OtherApp (Clawdbot has NO access)
+└── Project: AnotherApp (Clawdbot has NO access)
 ```
 
-### Clawdbot's Role with ClawDungeon
-
-| What Clawdbot Can Do | How |
-|---------------------|-----|
-| Create GitHub issues | ✅ Direct access |
-| Run CI/CD pipelines | ✅ GitHub Actions |
-| Review code | ✅ GitHub |
-| Create migrations files | ✅ Writes SQL to repo |
-| Suggest Supabase queries | ✅ But Trevor runs them |
-
-### Trevor's Workflow
-
-1. Clawdbot creates SQL migration in `~/GitHub/ClawDungeon/migrations/`
-2. Trevor reviews the migration
-3. Trevor runs it against Supabase manually (or via dashboard)
-4. No risk of Clawdbot accidentally deleting data
-
-### Supabase Project Setup (Done by Trevor)
-
-1. Create project at https://supabase.com
-2. Set up tables via Dashboard or SQL Editor
-3. Get keys, store locally (not in Clawdbot)
-4. Add keys to ClawDungeon's `.env` file
-5. Deploy to Fly.io with env vars
-
-**Clawdbot never has Supabase credentials.**
+- Inviting Clawdbot to organization = access to all projects
+- Inviting Clawdbot to specific project = only that project
+- **Best practice:** Use project-scoped invites
 
 ---
 
