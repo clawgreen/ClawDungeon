@@ -933,6 +933,299 @@ jobs:
 
 ---
 
+## Deployment & Operations
+
+### Environments
+
+| Environment | Purpose | URL | Database |
+|-------------|---------|-----|-----------|
+| **Local** | Development | http://localhost:3000 | Local PostgreSQL |
+| **Staging** | Testing | https://staging.dungeon.claw.green | Staging DB (neon/fly) |
+| **Production** | Live users | https://dungeon.claw.green | Production DB |
+
+### Local Development Setup
+
+```bash
+# Clone and setup
+git clone https://github.com/clawgreen/ClawDungeon
+cd ClawDungeon
+
+# Start PostgreSQL (Docker)
+docker run --name clawdungeon-db \
+  -e POSTGRES_PASSWORD=dev \
+  -p 5432:5432 \
+  -v clawdungeon_data:/var/lib/postgresql/data \
+  -d postgres:15
+
+# Copy environment
+cp .env.example .env
+
+# Install and run
+npm install
+npm run dev
+```
+
+### Environment Variables
+
+```bash
+# .env.example
+NODE_ENV=development
+PORT=3000
+
+# Database
+DATABASE_URL=postgresql://user:pass@localhost:5432/clawdungeon
+
+# Auth
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=eyJ...
+SUPABASE_SERVICE_KEY=eyJ...
+
+# App
+PUBLIC_APP_URL=http://localhost:3000
+PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+```
+
+### Database Migrations
+
+```bash
+# Create new migration
+npm run migrate:create add_items_table
+
+# Run migrations locally
+npm run migrate:up
+
+# Run migrations on staging
+npm run migrate:up --environment staging
+
+# Run migrations on production
+npm run migrate:up --environment production
+
+# Migrate down (rollback)
+npm run migrate:down
+```
+
+Migration files stored in:
+```
+migrations/
+├── 001_create_users_table.sql
+├── 002_create_bots_table.sql
+├── 003_create_rooms_table.sql
+└── README.md
+```
+
+### Deployment Commands
+
+**Prerequisites:**
+```bash
+# Install Fly.io CLI
+brew install flyctl
+
+# Login
+flyctl auth login
+
+# Set secrets
+flyctl secrets set DATABASE_URL="postgresql://..."
+flyctl secrets set SUPABASE_URL="https://..."
+flyctl secrets set SUPABASE_ANON_KEY="eyJ..."
+flyctl secrets set SUPABASE_SERVICE_KEY="eyJ..."
+```
+
+**Deploy to Staging:**
+```bash
+flyctl deploy --config fly.staging.toml --app clawdungeon-staging
+```
+
+**Deploy to Production:**
+```bash
+flyctl deploy --config fly.toml --app clawdungeon-prod
+```
+
+**Check Status:**
+```bash
+flyctl status --app clawdungeon-prod
+flyctl logs --app clawdungeon-prod
+```
+
+**SSH into Server:**
+```bash
+flyctl ssh console --app clawdungeon-prod
+```
+
+### Rollback Procedure
+
+**If deployment fails:**
+```bash
+# Rollback to previous release
+flyctl releases --app clawdungeon-prod
+flyctl rollback --app clawdungeon-prod --to-release <version>
+```
+
+**Emergency database rollback:**
+```bash
+# NEVER rollback without backup
+flyctl pg restore --app clawdungeon-prod <backup-name>
+```
+
+### Database Backups
+
+**Automatic (Neon/Fly.io):**
+- Daily automated backups included
+- Point-in-time recovery available on paid plans
+
+**Manual backup before migrations:**
+```bash
+# Export
+pg_dump $DATABASE_URL > backups/backup_$(date +%Y%m%d).sql
+
+# Store off-server
+scp backups/ backup-server:/backups/
+```
+
+**Restore from backup:**
+```bash
+psql $DATABASE_URL < backups/backup_20260205.sql
+```
+
+### Monitoring & Alerts
+
+**Health Check:**
+```
+GET /health
+Response: { "status": "ok", "timestamp": "..." }
+```
+
+**Endpoints:**
+- Staging: https://staging.dungeon.claw.green/health
+- Production: https://dungeon.claw.green/health
+
+**Uptime Monitoring:**
+- Use uptime-kuma or similar on separate server
+- Alert on Discord/Slack when down
+
+**Error Tracking:**
+- Sentry captures stack traces
+- Configure in `sentry.client.config.js`
+
+### Secrets Management
+
+| Secret | Where | Purpose |
+|--------|-------|---------|
+| DATABASE_URL | Fly.io Secrets | DB connection |
+| SUPABASE_ANON_KEY | Fly.io Secrets | Auth (public) |
+| SUPABASE_SERVICE_KEY | Fly.io Secrets | Auth (admin) |
+| JWT_SECRET | Fly.io Secrets | Session tokens |
+| SENTRY_DSN | Fly.io Secrets | Error tracking |
+
+**Never commit secrets to Git!**
+
+```bash
+# Add secrets to Fly.io
+flyctl secrets set JWT_SECRET="your-jwt-secret"
+flyctl secrets set SENTRY_DSN="https://..."
+
+# View secrets
+flyctl secrets list --app clawdungeon-prod
+```
+
+### Scaling Configuration
+
+**fly.toml (Production):**
+```toml
+app = "clawdungeon-prod"
+primary_region = "sea"
+
+[build]
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = false
+  min_machines = 1
+  max_machines = 3
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "1gb"
+  cpus = 2
+```
+
+**fly.staging.toml (Staging):**
+```toml
+app = "clawdungeon-staging"
+primary_region = "sea"
+
+[http_service]
+  internal_port = 3000
+  auto_stop_machines = true
+  min_machines = 0
+  max_machines = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+```
+
+### CI/CD Pipeline
+
+```yaml
+# .github/workflows/deploy.yml
+name: Deploy
+
+on:
+  push:
+    branches: [main, staging]
+  release:
+    types: [published]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: npm test
+
+  deploy-staging:
+    needs: test
+    if: github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@main
+        with:
+          flyctl-api-token: ${{ secrets.FLY_API_TOKEN }}
+      - run: flyctl deploy --config fly.staging.toml --app clawdungeon-staging
+
+  deploy-prod:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@main
+        with:
+          flyctl-api-token: ${{ secrets.FLY_API_TOKEN }}
+      - run: flyctl deploy --config fly.toml --app clawdungeon-prod
+```
+
+### Daily Operations Checklist
+
+```bash
+# Morning checks
+flyctl status --app clawdungeon-prod          # Is it running?
+flyctl logs --app clawdungeon-prod --tail    # Any errors?
+curl https://dungeon.claw.green/health       # Health check
+
+# Weekly
+flyctl releases --app clawdungeon-prod       # Review deployments
+npm run db:backup                           # Manual backup
+```
+
+---
+
 ## Development Phases
 
 ### Phase 1: MVP
