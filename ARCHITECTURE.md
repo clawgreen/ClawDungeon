@@ -327,6 +327,288 @@ bot.shareIntel({
 
 ---
 
+## MUD World Systems
+
+Traditional MUD features for a rich, explorable world.
+
+### 1. Rooms
+
+**Core Properties:**
+- Room ID, name, description
+- Room type (indoor, outdoor, cave, tunnel, landmark)
+- Ambient conditions (lighting, weather exposure, safety level)
+
+**Exits:**
+- Cardinal directions: north, south, east, west
+- Vertical: up, down
+- Special: northeast, northwest, southeast, southwest
+- Exit properties: door (locked/unlocked/hidden), one-way, collapsed
+
+**Directional Descriptions:**
+```json
+{
+  "from_north": "The room appears to be a small chamber. A doorway leads south into darkness.",
+  "from_south": "Looking north, you see a torchlit corridor stretching before you.",
+  "from_east": "The western approach reveals a heavy wooden door, slightly ajar.",
+  "from_west": "An eastern exit frames a view of the arena's central fire."
+}
+```
+
+### 2. Navigation System
+
+**Movement Commands:**
+- `north`, `south`, `east`, `west`, `up`, `down` (and abbreviations: `n`, `s`, `e`, `w`, `u`, `d`)
+- `go [direction]` - explicit movement
+- `look` - describe current room
+- `look [direction]` - describe what you see in that direction
+- `look at [object]` - examine something specific
+
+**Exit Blocking:**
+- Locked doors (require key or lockpick)
+- Hidden passages (require search or special vision)
+- One-way portals
+- Collapsed tunnels
+- NPC guards blocking paths
+
+### 3. Items System
+
+**Item Types:**
+- Weapons (swords, axes, bows, staffs)
+- Armor (helmets, chestplates, shields, boots)
+- Consumables (potions, food, scrolls)
+- Keys (physical keys for locks)
+- Containers (bags, backpacks, chests)
+- Quest items (unique, often un-droppable)
+- Currency (gold, gems, coins)
+- Materials (wood, stone, metal scraps)
+
+**Item Properties:**
+```sql
+CREATE TABLE items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    type VARCHAR(50),  -- weapon, armor, consumable, etc.
+    base_value INTEGER DEFAULT 0,
+    weight DECIMAL(5,2),  -- in arbitrary units
+    -- Weapon specific
+    damage_min INTEGER,
+    damage_max INTEGER,
+    damage_type VARCHAR(50),  -- slashing, piercing, magical
+    -- Armor specific
+    armor_class INTEGER,
+    slot VARCHAR(50),  -- head, body, hands, feet, held
+    -- Consumable specific
+    effect_type VARCHAR(50),
+    effect_value INTEGER,
+    -- Container specific
+    capacity_weight DECIMAL(8,2),
+    -- General
+    is_cursed BOOLEAN DEFAULT FALSE,
+    is_enchanted BOOLEAN DEFAULT FALSE,
+    enchantment_level INTEGER DEFAULT 0,
+    rarity VARCHAR(20)  -- common, uncommon, rare, epic, legendary
+);
+```
+
+**Item States:**
+- Condition (100% = pristine, 0% = destroyed)
+- Enchantment level (+0 to +10)
+- Cursed (cannot drop, cannot unequip)
+- Broken (non-functional until repaired)
+
+### 4. Characters (Players + Bots + NPCs)
+
+**Character Stats (Core):**
+```sql
+CREATE TABLE character_stats (
+    character_id UUID REFERENCES characters(id),
+    strength INTEGER DEFAULT 10,
+    dexterity INTEGER DEFAULT 10,
+    constitution INTEGER DEFAULT 10,
+    intelligence INTEGER DEFAULT 10,
+    wisdom INTEGER DEFAULT 10,
+    charisma INTEGER DEFAULT 10,
+    PRIMARY KEY (character_id)
+);
+```
+
+**Derived Stats (Calculated):**
+- HP = constitution × 10 + bonuses
+- Mana = intelligence × 10 + bonuses  
+- Stamina = constitution × 5 + bonuses
+- Carry Capacity = strength × 10 + bonuses (in weight units)
+- Armor Class = 10 + dex bonuses + armor
+- Hit Bonus = strength/weapon skill modifiers
+- Save Throws (fortitude, reflex, will)
+
+**Experience & Leveling:**
+- Experience points (XP) gained from actions
+- Level thresholds (100, 300, 600, 1000...)
+- Stat increases on level up
+- Skill point allocation
+
+### 5. Inventory System
+
+**Inventory Commands:**
+- `inventory` / `i` - list carried items
+- `get [item]` - pick up item from room
+- `drop [item]` - drop item to room
+- `put [item] in [container]` - store in container
+- `give [item] to [character]` - transfer item
+- `wear [item]` / `wield [item]` - equip
+- `remove [item]` - unequip
+
+**Weight Limits:**
+- Characters have maximum carry weight
+- Heavy items slow movement (optional mechanic)
+- Over-encumbered = cannot move or move slowly
+
+### 6. Combat System
+
+**Combat Commands:**
+- `attack [target]` / `kill [target]`
+- `defend` - take defensive stance (+AC)
+- `flee` - escape combat (random direction)
+- `use [item]` - consume potion/scroll
+
+**Combat Calculation:**
+```
+Hit Roll: d20 + hit_bonus >= target_ac
+Damage: weapon_damage + strength_bonus + enchantment
+Critical: Natural 20 = double damage + effects
+```
+
+**Combat States:**
+- In combat (cannot rest, cannot log out safely)
+- Fleeing (leaves you vulnerable)
+- Unconscious (can be looted, can be revived)
+- Dead (soul goes to afterlife, can watch)
+
+### 7. Interaction & Skill System
+
+**Skill Checks:**
+```
+Skill Roll: d20 + skill_level + stat_modifier >= difficulty
+```
+
+**Example Skills:**
+- Athletics (strength-based movement)
+- Stealth (avoid detection)
+- Perception (spot hidden things)
+- Lockpicking (open locks)
+- Persuasion (influence NPCs)
+- Intimidation (force compliance)
+- Trading (buy/sell prices)
+
+**Bot Integration:**
+```javascript
+// Bot receives skill challenge
+{
+  "type": "skill_check",
+  "skill": "perception",
+  "difficulty": 15,
+  "stake": "You try to spot hidden enemies in the darkness",
+  "options": ["attempt", "skip"]
+}
+
+// Bot responds
+{
+  "action": "attempt",
+  "confidence": 0.8  // optional hint to other bots
+}
+```
+
+### 8. Communication System
+
+**Player-to-Player:**
+- `say [message]` - to everyone in room
+- `tell [player] [message]` - private message
+- `shout [message]` - to entire area/zone
+- `emote [action]` - roleplay action
+
+**Channels:**
+- Global chat (limited frequency)
+- Bot-only channel (bots coordinate)
+- Human-only channel (social)
+- Team/guild channels
+
+**Bot Communication:**
+- Bots can broadcast to room
+- Bots can send private messages
+- Intel sharing (see Intelligence System)
+
+### 9. Time & World State
+
+**Game Time:**
+- Real-time ticks (game clock advances)
+- Time of day (morning, afternoon, evening, night)
+- Day/night cycle affects visibility
+- Weather states (clear, rain, fog, storm)
+
+**World Persistence:**
+- Room descriptions change based on events
+- Items move (don't disappear forever)
+- Characters remember previous interactions
+- World history log
+
+### 10. Character Management
+
+**Character Creation:**
+- Choose name (unique per account)
+- Allocate starting stats
+- Select starting equipment
+- Choose faction/alignment
+
+**Character Persistence:**
+- Save on quit (safe logout)
+- Auto-save periodically
+- Death consequences (XP loss, stat damage, item loss)
+- Resurrection options
+
+### 11. NPC System (Future)
+
+**NPC Types:**
+- Shopkeepers (buy/sell)
+- Quest givers
+- Guards (enforce rules)
+- Monsters (combat encounters)
+- Neutral characters (information, atmosphere)
+
+**NPC AI:**
+- Simple patrol routes
+- Reaction to players (hostile/neutral/friendly)
+- Quest state tracking
+
+### 12. Quest System (Future)
+
+**Quest Types:**
+- Fetch quests (get item)
+- Kill quests (defeat enemy)
+- Exploration quests (visit locations)
+- Social quests (interact with NPCs)
+- Puzzle quests (solve riddles)
+
+**Quest States:**
+- Not started
+- In progress
+- Completed
+- Failed (time limit exceeded)
+
+### 13. Faction & Reputation (Future)
+
+**Factions:**
+- Joinable groups (guilds, orders, factions)
+- Faction reputation ( Ally, Neutral, Enemy)
+- Faction-specific areas/items/quests
+
+**Reputation Effects:**
+- Shop prices (friends get discounts)
+- NPC reactions (guards arrest enemies)
+- Access restrictions (enemies cannot enter)
+
+---
+
 ## Bot SDK Interface
 
 ### JavaScript SDK (Reference)
