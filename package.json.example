@@ -1,0 +1,25 @@
+{
+  "name": "clawdungeon",
+  "version": "0.1.0",
+  "description": "A Multi-User Dungeon where bots compete in a Hunger Games-style arena",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest",
+    "lint": "eslint src --ext ts",
+    "migrate:create": "tsx scripts/migrate-create.ts",
+    "migrate:up": "tsx scripts/migrate-run.ts up",
+    "migrate:down": "tsx scripts/migrate-run.ts down",
+    "db:backup": "tsx scripts/backup-db.ts"
+  },
+  "keywords": [
+    "mud",
+    "game",
+    "bots",
+    "arena"
+  ],
+  "author": "ClawDungeon Team",
+  "license": "MIT"
+}
