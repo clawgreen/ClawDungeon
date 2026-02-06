@@ -729,4 +729,100 @@ Organization: Claw Projects
 
 ---
 
+## Cost Analysis: Is Supabase Worth It?
+
+### Supabase Pricing Breakdown
+
+| Resource | Free Tier | Pro Tier ($25/mo) |
+|----------|-----------|-------------------|
+| Database | 500 MB | 8 GB |
+| File Storage | 1 GB | Unlimited |
+| Bandwidth | 2 GB | 250 GB |
+| Edge Functions | 50K invocations | 2M invocations |
+| Auth Users | Unlimited | Unlimited |
+
+### Bandwidth: The Real Cost
+
+**Yes, bandwidth can be expensive** if your app grows. Here's the breakdown:
+
+**What's Bandwidth?**
+- Every API response from Supabase to your app
+- Every websocket message
+- Every file served
+
+**Estimated Bandwidth for ClawDungeon**
+
+Scenario: 16 bots, 1 API call/sec each, 30-day tournament
+
+```
+API calls:     16 bots × 1/sec × 3600 sec × 24 hr × 30 days = 41.5M calls
+Per call:      ~2 KB (JSON response)
+Total bandwidth: 41.5M × 2 KB = 83 GB/month
+
+Free tier:     2 GB (overage = ~$16-40/month)
+Pro tier:      250 GB included
+```
+
+### Cost Comparison: Supabase vs Alternatives
+
+| Service | Monthly Cost | What's Included |
+|---------|--------------|----------------|
+| **Supabase Pro** | $25/mo | DB (8GB) + Auth + 250GB bandwidth |
+| **Fly.io Postgres** | $14/mo | DB (10GB) only, no auth |
+| **Neon** | $9-15/mo | Serverless Postgres, pay-per-use |
+| **Railway** | $20/mo | DB + app hosting |
+
+### Alternative: Neon (Serverless Postgres)
+
+Neon is PostgreSQL-only, no auth built-in, but scales to zero:
+
+| Resource | Free Tier | Paid |
+|----------|-----------|------|
+| Database | 10 branches | Pay-per-use |
+| Storage | 10 GB | $10/10GB |
+| Bandwidth | 300 GB/mo | $0.10/GB |
+
+**Example Neon's costs for ClawDungeon:**
+```
+Database: ~1GB used = $1/mo
+Storage:  ~50MB = $0.05/mo
+Bandwidth: 83GB = $8.30/mo
+Auth: Build yourself or use Supabase Auth separately
+---------------------------------------
+Total: ~$9.35/mo (cheaper than Supabase Pro)
+```
+
+### Recommendation: Hybrid Approach
+
+**For MVP (1-50 bots):**
+- Use Supabase Free tier initially
+- Upgrade to Pro ($25/mo) when exceeding 2GB bandwidth
+- $25 is reasonable for production
+
+**If cost is critical:**
+- Use Neon for PostgreSQL ($9-15/mo)
+- Use Supabase Auth separately ($0 for Auth on Free)
+- More work to integrate, but cheaper
+
+### Cost Optimization Tips
+
+1. **Cache API responses** - Don't hit Supabase for every bot request
+2. **Batch requests** - Combine multiple bot queries into one
+3. **Use WebSockets efficiently** - Only send updates when state changes
+4. **Static frontend** - Serve HTML/CSS from CDN, not Supabase
+5. **Monitor usage** - Set up billing alerts
+
+### Estimated Monthly Costs (ClawDungeon)
+
+| Phase | Bots | Supabase Free | Supabase Pro |
+|-------|------|---------------|--------------|
+| MVP | 1-8 | $0 (might hit 2GB) | $25 |
+| Launch | 8-16 | Overage fees | $25 |
+| Growth | 16-50 | Overage fees | $25-50 |
+| Scale | 50+ | Too expensive | $50-100 |
+
+**Verdict:** Supabase Pro at $25/mo is reasonable for a game project. The auth + DB + 250GB bandwidth bundle is a good value. If you're just running small tournaments, Free tier might work for a while.
+
+---
+
 ## References
