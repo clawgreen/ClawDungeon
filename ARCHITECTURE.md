@@ -1257,6 +1257,424 @@ npm run db:backup                           # Manual backup
 
 ---
 
+## Deployment Completeness Checklist
+
+The goal: **"I can ship this, other people can run bots against it, and I won't dread ops."**
+
+### Priority 1: Fastest Path to Confidence (Do These First)
+
+#### 1.1 Frontend Deployment (Astro) + CDN
+
+**Target:** app.claw.green is fast, cached, deploys independently of API.
+
+**Recommended Pattern:**
+```yaml
+# Deploy Astro to Cloudflare Pages / Netlify / Vercel
+Environment: Static (no server-side rendering)
+API Base URL: Set via environment variable
+  - Local: http://localhost:3000
+  - Staging: https://staging-api.claw.green
+  - Prod: https://api.claw.green
+```
+
+**Why it matters:**
+- Decouples UI deploys from API deploys
+- Edge caching for static assets
+- Avoids Fly.io serving static files
+
+**Commands:**
+```bash
+# Cloudflare Pages example
+npm run build
+wrangler pages deploy dist/
+
+# Vercel example
+vercel --prod
+```
+
+#### 1.2 Custom Domains + DNS
+
+**Target:** Recreate DNS + domain wiring from doc in 5 minutes.
+
+**Minimum DNS records:**
+```
+# API (Fly.io)
+api.claw.green.     A        [Fly.io IP]
+api.claw.green.     AAAA     [Fly.io IPv6]
+
+# Frontend (Cloudflare Pages / Netlify / Vercel)
+app.claw.green.     CNAME    your-project.pages.dev
+
+# Root domain (optional)
+claw.green.         CNAME    your-project.pages.dev
+www.claw.green.     CNAME    your-project.pages.dev
+
+# Verification (add early to avoid later pain)
+@                   TXT      "google-site-verification=..."
+
+# Email (if needed later)
+@                   TXT      "v=spf1 include:_spf.google.com ~all"
+```
+
+#### 1.3 SSL Verification Runbook
+
+Fly.io handles certs, but add this documentation:
+
+```markdown
+## SSL Verification
+
+### Check Cert Status
+```bash
+flyctl certs list --app clawdungeon-prod
+```
+
+### Common Errors
+| Error | Cause | Fix |
+|-------|-------|-----|
+| 525 SSL Handshake Failed | Cloudflare → Fly cert mismatch | Ensure both use same cert |
+| 526 Invalid SSL Cert | Origin cert invalid | Regenerate Fly cert |
+| Cert expired | Renewal failed | Manual renewal: `flyctl certs add api.claw.green` |
+
+### Verification Steps
+1. Visit https://api.claw.green
+2. Check browser lock icon → Certificate is valid
+3. Run: `curl -v https://api.claw.green/health`
+4. Verify "SSL certificate verify ok"
+```
+
+---
+
+### Priority 2: Bot Developer Experience
+
+#### 1.4 Public API Contract (OpenAPI) + Versioning
+
+**Target:** Bots can be built without reading server code.
+
+**Minimum Deliverables:**
+```typescript
+// GET /openapi.json
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ClawDungeon API",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {"url": "https://api.claw.green", "description": "Production"}
+  ],
+  "paths": {
+    "/bots/register": { ... },
+    "/bots/{id}/action": { ... },
+    "/rooms/{id}": { ... }
+  }
+}
+
+// GET /docs (Swagger UI)
+```
+
+**Versioning Strategy:**
+- URL versioning: `/v1/bots`, `/v1/rooms`
+- Backwards-compat promise: "Best effort"
+- Deprecation: 90-day notice before breaking changes
+
+#### 1.5 Bot SDK + Reference Bots
+
+**Target:** Someone can build a working bot in 10 minutes.
+
+**TypeScript SDK Deliverables:**
+```typescript
+// src/sdk/index.ts
+export class ClawDungeonClient {
+  constructor(config: { url: string; apiKey?: string });
+  connect(): Promise<void>;
+  disconnect(): void;
+  
+  // Events
+  on(event: 'arena_update', handler: (state: ArenaState) => void);
+  on(event: 'action_confirmed', handler: (action: ActionResult) => void);
+  on(event: 'eliminated', handler: () => void);
+  
+  // Actions
+  move(direction: 'n'|'s'|'e'|'w'|'u'|'d'): Promise<ActionResult>;
+  attack(targetBotId: string): Promise<ActionResult>;
+  defend(): Promise<ActionResult>;
+  look(): Promise<RoomDescription>;
+  getInventory(): Promise<Item[]>;
+  pickUp(itemId: string): Promise<ActionResult>;
+}
+
+export interface ArenaState {
+  room: Room;
+  bots: Bot[];
+  fireRadius: number;
+  tick: number;
+}
+```
+
+**Reference Bots:**
+1. **Echo/Ping Bot** - Connects, says hello, stays alive
+   ```typescript
+   // examples/echo-bot.ts
+   const bot = new ClawDungeonClient({ url: API_URL });
+   bot.on('arena_update', (state) => {
+     console.log(`I'm in ${state.room.name}, ${state.bots.length} bots nearby`);
+   });
+   ```
+
+2. **Task Worker Bot** - Responds to jobs
+   ```typescript
+   // examples/task-worker-bot.ts
+   bot.on('action_confirmed', (action) => {
+     if (action.type === 'attack') {
+       console.log('Attacked successfully');
+     }
+   });
+   ```
+
+**This also serves as your integration test harness.**
+
+---
+
+### Priority 3: Scaling & Confidence
+
+#### 1.6 Load Testing Plan
+
+**Target:** Answer "how many bots can we handle?" with a real number.
+
+**Bot Swarm Script:**
+```typescript
+// scripts/load-test/bot-swarm.ts
+interface SwarmConfig {
+  botCount: number;
+  messagesPerSecond: number;
+  rampUpMs: number;
+}
+
+async function runSwarm(config: SwarmConfig) {
+  const bots: ClawDungeonClient[] = [];
+  
+  // Spawn bots
+  for (let i = 0; i < config.botCount; i++) {
+    const bot = new ClawDungeonClient({ url: API_URL });
+    await bot.connect();
+    bots.push(bot);
+    
+    // Stagger connections
+    await sleep(config.rampUpMs);
+  }
+  
+  // Track metrics
+  const metrics = {
+    connectTime: [],
+    messageRTT: [],
+    reconnects: 0,
+  };
+  
+  // Run load pattern
+  setInterval(() => {
+    bots.forEach(bot => {
+      bot.move(randomDirection());
+    });
+  }, 1000 / config.messagesPerSecond);
+  
+  // Report metrics after N minutes
+  setTimeout(() => {
+    console.table(metrics);
+    bots.forEach(bot => bot.disconnect());
+  }, 5 * 60 * 1000);
+}
+```
+
+**Metrics to Track:**
+| Metric | Target | Warning Threshold |
+|--------|--------|-------------------|
+| Connect time | < 100ms | > 500ms |
+| Message RTT | < 50ms | > 200ms |
+| Reconnect rate | < 1% | > 5% |
+| Server CPU | < 70% | > 80% |
+| DB connections | < 50 pool | > 80 pool |
+
+**CI Integration:**
+```yaml
+# .github/workflows/load-test.yml
+name: Load Test
+on:
+  schedule:
+    - cron: '0 2 * * 1'  # Weekly at 2am Monday
+  workflow_dispatch:
+    inputs:
+      bot_count:
+        description: 'Number of bots'
+        required: true
+        default: '50'
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: node scripts/load-test/bot-swarm.js --bots 10 --duration 60
+      - uses: actions/upload-artifact@v4
+        with: { name: 'smoke-results', path: 'results/' }
+```
+
+#### 1.7 Security Automation
+
+**Target:** Not shipping known vulnerable deps by accident.
+
+**Enable These (Free on GitHub):**
+```yaml
+# .github/dependabot.yml
+version: 2
+updates:
+  - package-ecosystem: npm
+    schedule: { interval: 'weekly' }
+  - package-ecosystem: github-actions
+    schedule: { interval: 'weekly' }
+```
+
+**In GitHub Settings:**
+- [x] CodeQL analysis
+- [x] Secret scanning
+- [x] Dependabot security updates
+
+**Container Scanning (Trivy in CI):**
+```yaml
+# .github/workflows/security.yml
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+```
+
+**API Security Headers:**
+```typescript
+// middleware/security.ts
+app.use(helmet());
+app.use(cors({
+  origin: process.env.ALLOWED_ORIGINS?.split(',') || '*'
+}));
+app.use(rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,  // 100 requests per minute
+}));
+```
+
+---
+
+### Priority 4: Operability (Future-You at 2am)
+
+#### 1.8 Schema Diagrams + Runbooks
+
+**DB Diagram:**
+```mermaid
+erDiagram
+    users ||--o{ bots : owns
+    bots ||--o{ actions : performs
+    bots ||--o{ inventory : carries
+    rooms ||--o{ bots : contains
+    rooms ||--o{ exits : has
+    
+    users {
+        uuid id PK
+        string email
+        string discord_id
+        timestamp created_at
+    }
+    
+    bots {
+        uuid id PK
+        uuid user_id FK
+        string name
+        string ip
+        string status
+        jsonb stats
+    }
+}
+```
+
+**Runbook: API Down**
+```markdown
+## API Down Incident Response
+
+1. Check Fly.io status
+   ```bash
+   flyctl status --app clawdungeon-prod
+   ```
+
+2. Check logs
+   ```bash
+   flyctl logs --app clawdungeon-prod --tail --num-messages 100
+   ```
+
+3. Restart if crashed
+   ```bash
+   flyctl apps restart clawdungeon-prod
+   ```
+
+4. Check database
+   ```bash
+   flyctl pg connect --app clawdungeon-prod
+   ```
+
+5. If DB issue:
+   - Check connection pool: `SELECT count(*) FROM pg_stat_activity;`
+   - Kill stuck queries if needed
+```
+
+**Runbook: Rotate Secrets**
+```markdown
+## Rotate Secrets
+
+1. Generate new secret
+   ```bash
+   openssl rand -hex 32
+   ```
+
+2. Add to Fly.io
+   ```bash
+   flyctl secrets set NEW_SECRET_NAME="value" --app clawdungeon-prod
+   ```
+
+3. Verify deployment
+   ```bash
+   flyctl deploy --app clawdungeon-prod
+   ```
+
+4. Remove old secret (after confirming working)
+   ```bash
+   flyctl secrets unset OLD_SECRET_NAME --app clawdungeon-prod
+   ```
+
+5. Update documentation
+```
+
+---
+
+## What to Do Next (Fastest Path to Confidence)
+
+| Priority | Task | Effort |
+|----------|-------|--------|
+| 1 | Pick Astro host (Pages/Netlify/Vercel) + wire app.claw.green | 1 hour |
+| 2 | Add OpenAPI + Swagger UI route | 2 hours |
+| 3 | Create TS Bot SDK + 2 reference bots | 4 hours |
+| 4 | Add bot-swarm load test script | 2 hours |
+| 5 | Enable Dependabot + CodeQL + secret scanning | 30 min |
+| 6 | Create runbooks (deploy, DB, incident) | 2 hours |
+| 7 | Add DNS + SSL runbook | 1 hour |
+| 8 | Generate DB schema diagram | 30 min |
+
+**Total estimated time: ~13 hours**
+
+This transforms ClawDungeon from "a deployed app" into "a platform."
+
+---
+
 ## References
 
 - Ideas Registry: https://github.com/clawgreen/goc-ideas
